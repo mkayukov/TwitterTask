@@ -3,77 +3,86 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
+using System.Threading.Tasks;
+using Microsoft.CSharp.RuntimeBinder;
 using Newtonsoft.Json;
 using TweetSharp;
 using TwitterTask.Infrastructure.Data;
+using TwitterTask.Infrastructure.Exceptions;
 using TwitterTask.Infrastructure.Services.Interfaces;
 
 namespace TwitterTask.Infrastructure.Services
 {
 	public class TwitterConsumerService : ITwitterConsumerService
 	{
+		private readonly HttpClient _httpClient;
 		private readonly AuthCredential _credentials;
+		private string _accessToken;
 
 		public TwitterConsumerService(AuthCredential credentials)
 		{
 			_credentials = credentials;
+			_httpClient = new HttpClient();
 		}
 
-		private string _accessToken;
-		private string AccessToken => _accessToken ?? (_accessToken = GetAccessToken());
-
-		private string GetAccessToken()
+		private async Task<string> GetAccessTokenAsync()
 		{
-			var post = WebRequest.Create("https://api.twitter.com/oauth2/token");
-			post.Method = "POST";
-			post.ContentType = "application/x-www-form-urlencoded";
-			post.Headers[HttpRequestHeader.Authorization] = "Basic " + _credentials.Credential;
-			var reqbody = Encoding.UTF8.GetBytes("grant_type=client_credentials");
-			post.ContentLength = reqbody.Length;
-			using (var req = post.GetRequestStream())
-			{
-				req.Write(reqbody, 0, reqbody.Length);
-			}
+			if (_accessToken != null) return _accessToken;
+
+			var request = new HttpRequestMessage(HttpMethod.Post, "https://api.twitter.com/oauth2/token");
+			request.Content = new StringContent("grant_type=client_credentials", Encoding.UTF8, "application/x-www-form-urlencoded");
+			request.Headers.Authorization = new AuthenticationHeaderValue("Basic", _credentials.Credential);
 			try
 			{
-				string respbody;
-				using (var resp = post.GetResponse().GetResponseStream())//there request sends
+				var response = await _httpClient.SendAsync(request);
+				var responseBody = await response.Content.ReadAsStringAsync();
+				_accessToken = (string) JsonConvert.DeserializeObject<dynamic>(responseBody)?.access_token;
+				return _accessToken;
+			}
+			catch (RuntimeBinderException exception)
+			{
+				throw new PublicException("1010", "Cannot parse access token result", exception);
+			}
+			catch (WebException exception)
+			{
+				switch ((exception.Response as HttpWebResponse)?.StatusCode)
 				{
-					var respR = new StreamReader(resp);
-					respbody = respR.ReadToEnd();
+					case HttpStatusCode.Forbidden:
+						throw new PublicException("1012", "Attempted to get token too frequently, try again later.");
+					default:
+						throw new PublicException("1011", "Unexpected web error");
 				}
-				var accessToken = JsonConvert.DeserializeObject<dynamic>(respbody)?.access_token;
-				return accessToken;
-			}
-			catch //if credentials are not valid (403 error)
-			{
-				throw;
 			}
 		}
 
-		public Tweet[] GetTweets(string screenName, int maxTweetCount)
+		public async Task<Tweet[]> GetTweetsAsync(string screenName, int maxTweetCount)
 		{
-			var gettimeline = WebRequest.Create($"https://api.twitter.com/1.1/statuses/user_timeline.json?count={maxTweetCount}&screen_name={screenName}&tweet_mode=extended");
-			gettimeline.Method = "GET";
-			gettimeline.Headers[HttpRequestHeader.Authorization] = "Bearer " + AccessToken;
+			if (screenName.Length > 50) // Точный макс. размер логина неизвестен, поэтому 50 хватит с запасом
+				throw new PublicException("1000", $"{nameof(screenName)} length is above 50 symbols");
+
+			var request = new HttpRequestMessage(HttpMethod.Get, $"https://api.twitter.com/1.1/statuses/user_timeline.json?count={maxTweetCount}&screen_name={screenName}&tweet_mode=extended");
+			request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", await GetAccessTokenAsync());
 			try
 			{
-				using (var resp = gettimeline.GetResponse().GetResponseStream())//there request sends
-				{
-					var respR = new StreamReader(resp);
-					var respbody = respR.ReadToEnd();
-
-					var tweets = JsonConvert.DeserializeObject<dynamic[]>(respbody)
+				var response = await _httpClient.SendAsync(request);
+				var responseBody = await response.Content.ReadAsStringAsync();
+				var tweets = JsonConvert.DeserializeObject<dynamic[]>(responseBody)
 						.Select(x => new Tweet((string)x.created_at, (string)x.full_text))
 						.ToArray();
-					return tweets;
-				}
-
+				return tweets;
 			}
-			catch //401 (access token invalid or expired)
+			catch (WebException exception)
 			{
-				throw;
+				switch ((exception.Response as HttpWebResponse)?.StatusCode)
+				{
+					case HttpStatusCode.NotFound:
+						throw new PublicException("1012", "Server unavailable or userName doesnt exist");
+					default:
+						throw new PublicException("1011", "Unexpected web error");
+				}
 			}
 		}
 	}

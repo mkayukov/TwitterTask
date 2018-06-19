@@ -55,6 +55,7 @@
   <ItemGroup>
     <Compile Include="Data\AuthCredential.cs" />
     <Compile Include="Data\Tweet.cs" />
+    <Compile Include="Exceptions\PublicException.cs" />
     <Compile Include="Services\Interfaces\ITwitterConsumerService.cs" />
     <Compile Include="Configuration\TwitterAuthConfig.cs" />
     <Compile Include="Services\TweetTextService.cs" />

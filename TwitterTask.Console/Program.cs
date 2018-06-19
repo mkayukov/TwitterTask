@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading.Tasks;
 using TweetSharp;
 using TwitterTask.Infrastructure.Configuration;
+using TwitterTask.Infrastructure.Exceptions;
 using TwitterTask.Infrastructure.Services;
 using TwitterTask.Infrastructure.Services.Interfaces;
 
@@ -38,41 +39,62 @@ namespace TwitterTask
 		{
 			while (true)
 			{
-				Console.Write($"Choose operation '{CONSOLE_STATS}'('cs') or '{TWEET_STATS}'('ts'): ");
-				var operation = Console.ReadLine();
-				if (operation == CONSOLE_STATS || operation == CONSOLE_STATS_SMALL)
+				try
 				{
-					Console.Write("Write twitter userName: ");
-					ConsoleLetterUsageStats(Console.ReadLine());
-				}
-				else if (operation == TWEET_STATS || operation == TWEET_STATS_SMALL)
-				{
-					Console.Write("Write twitter userName: ");
-					TweetLetterUsageStats(Console.ReadLine());
-				}
-				else if (operation == EXIT)
-					break;
+					Console.Write($"Choose operation '{CONSOLE_STATS}'('cs') or '{TWEET_STATS}'('ts'): ");
+					var operation = Console.ReadLine();
+					if (operation == CONSOLE_STATS || operation == CONSOLE_STATS_SMALL)
+					{
+						Console.Write("Write twitter userName: ");
+						ConsoleLetterUsageStats(Console.ReadLine());
+					}
+					else if (operation == TWEET_STATS || operation == TWEET_STATS_SMALL)
+					{
+						Console.Write("Write twitter userName: ");
+						TweetLetterUsageStats(Console.ReadLine());
+					}
+					else if (operation == EXIT)
+						break;
 
-				Console.WriteLine("----------------------------------------------------------------");
+				}
+				catch (PublicException exception)
+				{
+					Console.WriteLine($"Exception occured: [{exception.Code}] {exception.Message}");
+				}
+				catch (AggregateException exception)
+				{
+					var publicException = exception.InnerExceptions.Count == 1 ? exception.InnerException as PublicException : null;
+					if (publicException != null)
+						Console.WriteLine($"Exception occured: [{publicException.Code}] {publicException.Message}");
+					else
+						throw;
+				}
+				finally
+				{
+					Console.WriteLine("----------------------------------------------------------------");
+				}
 			}
 		}
 
-		static void ConsoleLetterUsageStats(string userName)
-		{
-			var tweets = _twitterConsumerService.GetTweets(userName, 5);
-			var usageStatsMessage = _tweetTextService.GetTweetCharUsageStatsMessage(userName, tweets);
-			Console.WriteLine(usageStatsMessage);
-		}
+		static void ConsoleLetterUsageStats(string userName) => Console.WriteLine(GetUsageStatsMessage(userName));
 
 		static void TweetLetterUsageStats(string userName)
 		{
-			var tweets = _twitterConsumerService.GetTweets(userName, 5);
-			var usageStatsMessage = _tweetTextService.GetTweetCharUsageStatsMessage(userName, tweets);
-
+			var usageStatsMessage = GetUsageStatsMessage(userName);
 			if (!_isUserAuthenticated) InitUserAuthentication();
 
 			var twitterStatus = _twitterService.SendTweet(new SendTweetOptions { Status = usageStatsMessage });
-			Console.WriteLine(twitterStatus != null ? "Сообщение отправлено успешно" : "Сообщение не было отправлено");
+			if(twitterStatus == null)
+				throw new PublicException("2000", "Unexpected error ocured while trying to send tweet");
+			Console.WriteLine("Сообщение отправлено успешно");
+		}
+
+		static string GetUsageStatsMessage(string userName)
+		{
+			var tweetsTask = _twitterConsumerService.GetTweetsAsync(userName, 5);
+			tweetsTask.Wait();
+			var usageStatsMessage = _tweetTextService.GetTweetCharUsageStatsMessage(userName, tweetsTask.Result);
+			return usageStatsMessage;
 		}
 
 		static void InitUserAuthentication()

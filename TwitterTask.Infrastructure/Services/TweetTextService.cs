@@ -4,13 +4,29 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json;
 using TwitterTask.Infrastructure.Data;
+using TwitterTask.Infrastructure.Exceptions;
 using TwitterTask.Infrastructure.Services.Interfaces;
 
 namespace TwitterTask.Infrastructure.Services
 {
 	public class TweetTextService : ITweetTextService
 	{
-		public Dictionary<char, decimal> GetTweetCharUsageStats(IEnumerable<Tweet> tweets)
+		const int MAX_TWEET_SYMBOL_COUNT = 280;
+
+		public string GetTweetCharUsageStatsMessage(string userName, IEnumerable<Tweet> tweets)
+		{
+			var twitterUserName = new Regex("@.+").IsMatch(userName) ? userName : $"@{userName}";
+			var usageStats = GetTweetCharUsageStats(tweets);
+
+			var outputStatsMessage = FillMessage(twitterUserName, usageStats);
+
+			if (outputStatsMessage.Length > MAX_TWEET_SYMBOL_COUNT)
+				outputStatsMessage = TruncateMessage(twitterUserName, usageStats);
+
+			return outputStatsMessage;
+		}
+
+		private Dictionary<char, decimal> GetTweetCharUsageStats(IEnumerable<Tweet> tweets)
 		{
 			var cleanTweets = tweets
 				.Select(x => GetTextWithoutTweetUrlLinks(x.Text))
@@ -33,18 +49,6 @@ namespace TwitterTask.Infrastructure.Services
 			return charUsage;
 		}
 
-		public string GetTweetCharUsageStatsMessage(string userName, IEnumerable<Tweet> tweets)
-		{
-			var twitterUserName = new Regex("@.+").IsMatch(userName) ? userName : $"@{userName}";
-			var usageStats = GetTweetCharUsageStats(tweets);
-
-			var outputStatsMessage = FillMessage(twitterUserName, usageStats);
-			if (outputStatsMessage.Length > 280)
-				outputStatsMessage = TruncateMessage(twitterUserName, usageStats);
-			
-			return outputStatsMessage;
-		}
-
 		/// <summary>
 		/// т.к. в твитере есть ограничение на кол-во символов, пытаемся с минимальными потерями урезать сообщение
 		/// </summary>
@@ -53,12 +57,10 @@ namespace TwitterTask.Infrastructure.Services
 		/// <returns></returns>
 		private string TruncateMessage(string userName, Dictionary<char, decimal> usageStats)
 		{
-			const int maxTweetSymbolCount = 280;
-			if (usageStats.Count == 0) throw new ArgumentOutOfRangeException($"Max length is above {maxTweetSymbolCount} but stats are empty");
 			var precision = 4;
 			var statsLength = usageStats.Count;
 			var outputStatsMessage = FillMessage(userName, usageStats);
-			while (outputStatsMessage.Length > 280)
+			while (outputStatsMessage.Length > MAX_TWEET_SYMBOL_COUNT)
 			{
 				if (precision > 2)
 				{
@@ -73,7 +75,7 @@ namespace TwitterTask.Infrastructure.Services
 						.ToDictionary(x => x.Key, x => x.Value);
 				}
 				else
-					throw new ArgumentOutOfRangeException($"Message cannot be truncated to max tweet size of {maxTweetSymbolCount}");
+					throw new PublicException("1001", $"Message cannot be truncated to max tweet size of {MAX_TWEET_SYMBOL_COUNT}");
 
 				outputStatsMessage = FillMessage(userName, usageStats);
 			}
