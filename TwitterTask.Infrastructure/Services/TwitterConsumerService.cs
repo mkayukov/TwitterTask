@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -38,6 +39,8 @@ namespace TwitterTask.Infrastructure.Services
 			try
 			{
 				var response = await _httpClient.SendAsync(request);
+				if (response.StatusCode == HttpStatusCode.Forbidden)
+					throw new PublicException("1012", "Attempted to get token too frequently, try again later.");
 				var responseBody = await response.Content.ReadAsStringAsync();
 				_accessToken = (string) JsonConvert.DeserializeObject<dynamic>(responseBody)?.access_token;
 				return _accessToken;
@@ -48,13 +51,7 @@ namespace TwitterTask.Infrastructure.Services
 			}
 			catch (WebException exception)
 			{
-				switch ((exception.Response as HttpWebResponse)?.StatusCode)
-				{
-					case HttpStatusCode.Forbidden:
-						throw new PublicException("1012", "Attempted to get token too frequently, try again later.");
-					default:
-						throw new PublicException("1011", "Unexpected web error");
-				}
+				throw new PublicException("1011", "Unexpected web error", exception);
 			}
 		}
 
@@ -68,21 +65,22 @@ namespace TwitterTask.Infrastructure.Services
 			try
 			{
 				var response = await _httpClient.SendAsync(request);
+				if (response.StatusCode == HttpStatusCode.NotFound)
+					throw new PublicException("1012", "Server unavailable or userName doesnt exist");
+
 				var responseBody = await response.Content.ReadAsStringAsync();
 				var tweets = JsonConvert.DeserializeObject<dynamic[]>(responseBody)
 						.Select(x => new Tweet((string)x.created_at, (string)x.full_text))
 						.ToArray();
 				return tweets;
 			}
+			catch (RuntimeBinderException exception)
+			{
+				throw new PublicException("1010", "Cannot parse tweets result", exception);
+			}
 			catch (WebException exception)
 			{
-				switch ((exception.Response as HttpWebResponse)?.StatusCode)
-				{
-					case HttpStatusCode.NotFound:
-						throw new PublicException("1012", "Server unavailable or userName doesnt exist");
-					default:
-						throw new PublicException("1011", "Unexpected web error");
-				}
+				throw new PublicException("1011", "Unexpected web error", exception);
 			}
 		}
 	}
